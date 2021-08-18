@@ -1,12 +1,12 @@
 [settings]
 active_profile = HIPTA
-log_file = pdu_log4.txt
+log_file = pdu_log6.txt
 device = unit2
 ip = localhost
 dest_port = 10001
 is_dual_port = True
 recv_port = 10002
-refresh_status = 30
+refresh_status = 10
 port = 10001
 nominal_voltage = 28
 total_battery_power = 3750

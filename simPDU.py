@@ -7,6 +7,7 @@ from socket import *
 def main():
     rx_port = 10001
     tx_port = 10002
+    is_on = ['0', '0', '0', '0', '0', '0']
     print(f"STARTING simPDU with rx port = {rx_port} and txt port = {tx_port}")
     sock = socket(AF_INET, SOCK_DGRAM)
     sock.bind(('localhost', rx_port))
@@ -20,12 +21,15 @@ def main():
             element = raw_packet.split(',')
             print(len(element))
             if element[0] == 'SETSRVC':
+                service_index = int(element[1]) - 1
+                is_on[service_index] = element[2]
                 return_packet = f'SRVCSET,{element[1]},{element[2]}'
                 print('TX: '+return_packet)
                 sock.sendto(return_packet.encode(), ('localhost', tx_port))
             elif element[0] == 'STATUS':
+                service_index = int(element[1]) - 1
                 value = uniform(0.5, 1.0)
-                return_packet = f'STATUS,{element[1]},{value:.3f}'
+                return_packet = f'STATUS,{element[1]},{is_on[service_index]},{value:.3f}'
                 print('TX: '+return_packet)
                 sock.sendto(return_packet.encode(), ('localhost', tx_port))
             elif element[0] == 'SETIP':

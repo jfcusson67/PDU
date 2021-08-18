@@ -85,6 +85,9 @@
  2.03 JFC - First complete prototype. Corrected incoherences between UTC and
             non-UTC timestamps
  2.04 JFC - Added Wh offset
+ 2.05 JFC - Corrected bad TM parsint for SRVSET. Changed IN FLIGHT button
+            to USE BATTERIES concept. TOTAL now shows full battery
+            consumption with heaters when on batteries.
 """
 import configparser
 import os
@@ -99,7 +102,7 @@ from socket import *
 # ========================================== #
 # Make sure to update this VERSION_STRING!   #
 # ========================================== #
-VERSION_STRING = "2.04 (August 2021)"
+VERSION_STRING = "2.05 (August 2021)"
 # ========================================== #
 DEBUG = False                                # Set to false in operation
 CONFIG_FILE = "settings.ini"                # Path of config file
@@ -116,7 +119,7 @@ _S5_ = 4
 _S6_ = 5
 _HEATERS_ = 6
 
-global in_flight
+global use_batteries
 global battery
 global window
 global log                                  # Glogal custom log object (a simple one we define in this file)
@@ -170,7 +173,7 @@ def make_window(theme, profiles, settings, services, devices):
     tmtclog_frame = sg.Frame('TMTC Log', tmtclog_layout)
 
     status_layout = [
-        [sg.Button('START FLIGHT', key='-FLIGHT_TOGGLE-'), sg.Text('IDLE', key='-STATUS-', size=(10, 1), justification='center'), sg.Text('UTC:'), sg.Input(key='-CURRENT_TIME-', size=(20, 1))]
+        [sg.Button('USE BATTERIES', key='-ON_BATTERIES_TOGGLE-', size=(20, 1)), sg.Text('USING POWER SUPPLY', key='-STATUS-', size=(20, 1), justification='center'), sg.Text('UTC:'), sg.Input(key='-CURRENT_TIME-', size=(20, 1))]
     ]
     status_frame = sg.Frame('Status', status_layout)
 
@@ -186,27 +189,28 @@ def make_window(theme, profiles, settings, services, devices):
     outputctrl_frame = sg.Frame('Output Control', outputctrl_layout)
 
     pwrusage_layout = [
-        [sg.Checkbox('On Power Supply', key='-ON_POWER_SUPPLY-', enable_events=True)],
+        # [sg.Checkbox('On Power Supply', key='-ON_POWER_SUPPLY-', enable_events=True)],
         [
             sg.Text('Nominal Voltage:'), sg.Input(key='-NOMINAL_VOLTAGE-', size=(5, 1), pad=(0, 0), default_text=settings['nominal_voltage'], disabled=True), sg.Text('V'),
             sg.Text('Total Battery Power:'), sg.Input(key='-TOTAL_BATTERY_POWER-', size=(5, 1), pad=(0, 0), default_text=settings['total_battery_power'], disabled=True), sg.Text('Wh'),
             sg.Text('Offset:'), sg.Input(key='-OFFSET_WH-', size=(5, 1), pad=(0, 0)), sg.Text('Wh')
         ],
         [
-            sg.Text('Heater(s) consumption:'), sg.Input(key='-HEATERS_CONSUMPTION-', size=(5, 1), pad=(0, 0), default_text=settings['heaters_consumption'], disabled=True), sg.Text('A'),
-            sg.Text('Heater Running Sum:'), sg.Text('n/a', key='-HEATERS_WH-', size=(10, 1), pad=(0, 0), background_color='white', text_color='black'), sg.Text('Wh')
+            # sg.Text('Heaters:', size=(10, 1)), sg.Input(key='-HEATERS_A-', size=(10, 1), pad=(0, 0), default_text=settings['heaters_consumption'], disabled=True), sg.Text('A'),
+            sg.Text('Heaters:', size=(10, 1)), sg.Text(settings['heaters_consumption'], key='-HEATERS_A-', size=(10, 1), pad=(0, 0), background_color='white', text_color='black'), sg.Text('A'),
+            sg.Text('Running Sum:', size=(10, 1)), sg.Text('n/a', key='-HEATERS_WH-', size=(10, 1), pad=(0, 0), background_color='white', text_color='black'), sg.Text('Wh')
         ],
         [
             sg.Text('Group #1:', size=(10, 1)), sg.Input(key='-GR1_A-', size=(10, 1), pad=(0, 0)), sg.Text('A'),
-            sg.Text('Limit:'), sg.Input(key='-GR1_LIMIT_WH-', size=(10, 1), pad=(0, 0), default_text=settings['group1_limit']), sg.Text('Wh'),
-            sg.Text('Running Sum:'), sg.Input(key='-GR1_WH-', size=(10, 1), pad=(0, 0)), sg.Text('Wh')
+            sg.Text('Running Sum:'), sg.Input(key='-GR1_WH-', size=(10, 1), pad=(0, 0)), sg.Text('Wh'),
+            sg.Text('Limit:'), sg.Input(key='-GR1_LIMIT_WH-', size=(10, 1), pad=(0, 0), default_text=settings['group1_limit']), sg.Text('Wh')
         ],
         [
             sg.Text('Group #2:', size=(10, 1)), sg.Input(key='-GR2_A-', size=(10, 1), pad=(0, 0)), sg.Text('A'),
-            sg.Text('Limit:'), sg.Input(key='-GR2_LIMIT_WH-', size=(10, 1), pad=(0, 0), default_text=settings['group2_limit']), sg.Text('Wh'),
-            sg.Text('Running Sum:'), sg.Input(key='-GR2_WH-', size=(10, 1), pad=(0, 0)), sg.Text('Wh')
+            sg.Text('Running Sum:'), sg.Input(key='-GR2_WH-', size=(10, 1), pad=(0, 0)), sg.Text('Wh'),
+            sg.Text('Limit:'), sg.Input(key='-GR2_LIMIT_WH-', size=(10, 1), pad=(0, 0), default_text=settings['group2_limit']), sg.Text('Wh')
         ],
-        [sg.Text('Total:', size=(10, 1)), sg.Text('n/a', key='-GROUPS_A-', size=(10, 1), pad=(0, 0), background_color='white', text_color='black'), sg.Text('A')]
+        [sg.Text('Total:', size=(10, 1)), sg.Text('n/a', key='-TOTAL_A-', size=(10, 1), pad=(0, 0), background_color='white', text_color='black'), sg.Text('A')]
     ]
     pwrusage_frame = sg.Frame('Power Usage', pwrusage_layout)
 
@@ -311,13 +315,13 @@ def log_file_exists_popup(filename):
 def main():
     """ Main entry point
     """
-    global window, log, in_flight, battery
+    global window, log, use_batteries, battery
     global output, group1, group2  # output_current_accumulated_group1, output_current_accumulated_group2
 
-    # -------------------------------------------------- #
-    # Always starts with state IDLE (i.e. NOT in flight) #
-    # -------------------------------------------------- #
-    in_flight = False
+    # --------------------------------------------- #
+    # Always starts assuming we're on power supply  #
+    # --------------------------------------------- #
+    use_batteries = False
 
     battery = {'nominal_voltage': 28.0, 'heaters_consumption': 0.9, 'max_wh': 3750, 'progress_wh': 3750, 'progress_percent': 100}
     output = {'current': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -436,7 +440,7 @@ def main():
                     # Take the opportunity to verify if heaters #
                     # accumulated some power consumption.       #
                     # ----------------------------------------- #
-                    if in_flight:
+                    if use_batteries:
                         if float(output['last_update_time'][_HEATERS_]) > 0.0:
                             delta = datetime.utcnow().timestamp() - output['last_update_time'][_HEATERS_]
                             if float(delta) > 0.0:
@@ -464,10 +468,10 @@ def main():
             # Update running time clock UTC and status #
             # ---------------------------------------- #
             window['-CURRENT_TIME-'].update(datetime.utcnow().isoformat(sep=' ', timespec='seconds'))
-            if in_flight:
-                window['-STATUS-'].update('IN FLIGHT', text_color='white', background_color='green')
+            if use_batteries:
+                window['-STATUS-'].update('USING BATTERIES', text_color='white', background_color='green')
             else:
-                window['-STATUS-'].update('IDLE', text_color='white', background_color='red')
+                window['-STATUS-'].update('USING POWER SUPPLY', text_color='white', background_color='red')
         # ..................................................................... ABOUT
         elif event == 'About':
             sg.popup('An application to control the CSA STRATOS Power Distribution Unit',
@@ -482,16 +486,16 @@ def main():
                 window['-LOG_FILE-'].update(log_filename)
                 settings['log_file'] = log_filename
         # ..................................................................... FLIGHT TOGGLE
-        elif event == '-FLIGHT_TOGGLE-':
-            if in_flight:               # There must be a way just to toggle...
-                in_flight = False
+        elif event == '-ON_BATTERIES_TOGGLE-':
+            if use_batteries:               # There must be a way just to toggle...
+                use_batteries = False
                 output['last_update_time'][_HEATERS_] = datetime.utcnow().timestamp()
-                log.event("END_FLIGHT", is_save_to_log_file=True)     #NOTE: DO NOT CHANGE, "END_FLIGHT" is a keyword
-                window['-FLIGHT_TOGGLE-'].update('START FLIGHT')
+                log.event("END_USE_BATTERIES", is_save_to_log_file=True)     #NOTE: DO NOT CHANGE, "END_USE_BATTERIES" is a keyword
+                window['-ON_BATTERIES_TOGGLE-'].update('USE BATTERIES')
             else:
-                in_flight = True
-                log.event("START_FLIGHT", is_save_to_log_file=True)  # NOTE: DO NOT CHANGE, "START_FLIGHT" is a keyword
-                window['-FLIGHT_TOGGLE-'].update('END FLIGHT')
+                use_batteries = True
+                log.event("START_USE_BATTERIES", is_save_to_log_file=True)  # NOTE: DO NOT CHANGE, "START_USE_BATTERIES" is a keyword
+                window['-ON_BATTERIES_TOGGLE-'].update('USE POWER SUPPLY')
         # ..................................................................... CHANGED DEVICE
         # elif event == '-DEVICE-':
         #     log.debug("Clicked Device Button to select: "+values['-DEVICE-'])
@@ -680,7 +684,7 @@ def parse_telemetry(raw_packet, is_save_to_log_file):
         Note that the packet must be in the standard format:
         SRC,YYYY-MM-DD HH:MM:SS.sss,PKT_ID,...
     """
-    global window, log, output, battery, in_flight
+    global window, log, output, battery, use_batteries
 
     packet = raw_packet.split(",")
 
@@ -703,11 +707,11 @@ def parse_telemetry(raw_packet, is_save_to_log_file):
         # ---------------------------------------------------------- #
         # ......................................................................... EVENT
         if header == "EVENT":
-            if packet[3] == "START_FLIGHT":
-                in_flight = True
+            if packet[3] == "START_USE_BATTERIES":
+                use_batteries = True
                 output['last_update_time'][_HEATERS_] = time_of_reception
-            elif packet[3] == "END_FLIGHT" and float(output['last_update_time'][_HEATERS_]) > 0.0:
-                in_flight = False
+            elif packet[3] == "END_USE_BATTERIES" and float(output['last_update_time'][_HEATERS_]) > 0.0:
+                use_batteries = False
                 delta = time_of_reception - output['last_update_time'][_HEATERS_]
                 if float(delta) > 0.0:
                     output['accumulated_Wh'][_HEATERS_] += (float(battery['heaters_consumption']) * (delta / 3600.0) * float(battery['nominal_voltage']))
@@ -731,24 +735,24 @@ def parse_telemetry(raw_packet, is_save_to_log_file):
                 log.warning(f"Bad service index ({service_id}) for SRVCSET received", is_save_to_log_file)
     # ......................................................................... STATUS
     elif header == "STATUS":
-        if len(packet) < 5:
+        if len(packet) < 6:
             log.warning("STATUS packet error - Too short", is_save_to_log_file)
         else:
-            service_id, value = packet[3], packet[4]
+            service_id, service_state, value = packet[3], packet[4], packet[5]
             if service_id.isdigit():
                 index = int(service_id)
                 if (index >= 1) and (index <= 6):
                     index = index - 1   # The array starts at zero!
                     output['current'][index] = float(value)
+                    output['is_on'][index] = (service_state == '1')
                     # ------------------------------ #
                     # Calculated accumulated current #
                     # ------------------------------ #
-                    if output['last_update_time'][index] > 0.0:
-                        delta = time_of_reception - output['last_update_time'][index]
-                        # output['accumulated_A'][index] += output['current'][index]
-                        output['accumulated_Wh'][index] += (output['current'][index] * (delta/3600.0) * float(battery['nominal_voltage']))
-                        # print(f"Accumulated[{index}={output['accumulated_Ah'][index]}")  ########################################################## TODO: Remove
-                    output['last_update_time'][index] = time_of_reception
+                    if use_batteries:
+                        if output['last_update_time'][index] > 0.0:
+                            delta = time_of_reception - output['last_update_time'][index]
+                            output['accumulated_Wh'][index] += (output['current'][index] * (delta/3600.0) * float(battery['nominal_voltage']))
+                        output['last_update_time'][index] = time_of_reception
                 else:
                     log.warning(f"Service index ({service_id}) out of range for STATUS received", is_save_to_log_file)
             else:
@@ -780,7 +784,7 @@ def parse_telemetry(raw_packet, is_save_to_log_file):
 def refresh_telemetry_stats_on_gui(services, values):
     """ Refresh all GUI elements related to dynamic telemetry values
     """
-    global window, battery, output, group1, group2
+    global window, battery, output, group1, group2, use_batteries
 
     window['-S1TOGGLE-'].update(get_service_text_status(_S1_, services), button_color=get_service_color_status(_S1_))
     window['-S2TOGGLE-'].update(get_service_text_status(_S2_, services), button_color=get_service_color_status(_S2_))
@@ -858,10 +862,22 @@ def refresh_telemetry_stats_on_gui(services, values):
         else:
             window['-GR2_LIMIT_WH-'].update(background_color='white')
             window['-GR2_WH-'].update(background_color='white')
-    # .........................................................................Total Groups
-    total_groups_A = float(group1['A']) + float(group2['A'])
-    print(f"updating total currant for groups: {total_groups_A}")
-    window['-GROUPS_A-'].Update(f"{total_groups_A:.3f}")
+    # .........................................................................Total
+    # total_groups_A = float(group1['A']) + float(group2['A'])
+    # print(f"updating total currant for groups: {total_groups_A}")
+    # window['-GROUPS_A-'].Update(f"{total_groups_A:.3f}")
+    total_A = float(output['current'][_S1_])
+    total_A += float(output['current'][_S2_])
+    total_A += float(output['current'][_S3_])
+    total_A += float(output['current'][_S4_])
+    total_A += float(output['current'][_S5_])
+    total_A += float(output['current'][_S6_])
+    if use_batteries:
+        total_A += float(battery['heaters_consumption'])
+        window['-HEATERS_A-'].update(background_color='white')
+    else:
+        window['-HEATERS_A-'].update(background_color='gray')
+    window['-TOTAL_A-'].Update(f"{total_A:.3f}")
     # .........................................................................Battery
     battery['progress_wh'] = 0.0
     total_used = float(output['accumulated_Wh'][_S1_])
