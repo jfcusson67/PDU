@@ -1,0 +1,41 @@
+[settings]
+active_profile = HIPTA
+log_file = pdu_log4.txt
+device = unit2
+ip = localhost
+dest_port = 10001
+is_dual_port = True
+recv_port = 10002
+refresh_status = 30
+port = 10001
+nominal_voltage = 28
+total_battery_power = 3750
+group1_limit = 1000
+group2_limit = -1
+heaters_consumption = 4.5
+
+[devices]
+unit1 = 00:08:DC:4F:0E:A8
+unit2 = 00:08:DC:55:29:DE
+arduinotest = 00:08:DC:4F:0E:AA
+
+[services]
+service1 = HIPTA E-BOX
+service1_group1 = True
+service1_group2 = False
+service2 = HIPTA OPTICS
+service2_group1 = True
+service2_group2 = False
+service3 = HIPTA HEATERS
+service3_group1 = True
+service3_group2 = False
+service4 = UNUSED
+service4_group1 = False
+service4_group2 = False
+service5 = ALI
+service5_group1 = False
+service5_group2 = True
+service6 = ALI
+service6_group1 = False
+service6_group2 = True
+
