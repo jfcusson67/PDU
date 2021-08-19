@@ -88,6 +88,8 @@
  2.05 JFC - Corrected bad TM parsint for SRVSET. Changed IN FLIGHT button
             to USE BATTERIES concept. TOTAL now shows full battery
             consumption with heaters when on batteries.
+ 2.06 JFC - Interpret negative current as zero. Added total running sum
+            and running time since last TM
 """
 import configparser
 import os
@@ -102,7 +104,7 @@ from socket import *
 # ========================================== #
 # Make sure to update this VERSION_STRING!   #
 # ========================================== #
-VERSION_STRING = "2.05 (August 2021)"
+VERSION_STRING = "2.06 (August 2021)"
 # ========================================== #
 DEBUG = False                                # Set to false in operation
 CONFIG_FILE = "settings.ini"                # Path of config file
@@ -119,6 +121,7 @@ _S5_ = 4
 _S6_ = 5
 _HEATERS_ = 6
 
+global time_last_packet_received
 global use_batteries
 global battery
 global window
@@ -173,7 +176,11 @@ def make_window(theme, profiles, settings, services, devices):
     tmtclog_frame = sg.Frame('TMTC Log', tmtclog_layout)
 
     status_layout = [
-        [sg.Button('USE BATTERIES', key='-ON_BATTERIES_TOGGLE-', size=(20, 1)), sg.Text('USING POWER SUPPLY', key='-STATUS-', size=(20, 1), justification='center'), sg.Text('UTC:'), sg.Input(key='-CURRENT_TIME-', size=(20, 1))]
+        [
+            sg.Button('USE BATTERIES', key='-ON_BATTERIES_TOGGLE-', size=(20, 1)), sg.Text('USING POWER SUPPLY', key='-STATUS-', size=(20, 1), justification='center'),
+            sg.Text('UTC:'), sg.Input(key='-CURRENT_TIME-', size=(20, 1)),
+            sg.Text('Time Since Last TM:'), sg.Input(key='-TIME_SINCE_PDU-', size=(7, 1), pad=(0, 0)), sg.Text('S')
+        ]
     ]
     status_frame = sg.Frame('Status', status_layout)
 
@@ -210,7 +217,10 @@ def make_window(theme, profiles, settings, services, devices):
             sg.Text('Running Sum:'), sg.Input(key='-GR2_WH-', size=(10, 1), pad=(0, 0)), sg.Text('Wh'),
             sg.Text('Limit:'), sg.Input(key='-GR2_LIMIT_WH-', size=(10, 1), pad=(0, 0), default_text=settings['group2_limit']), sg.Text('Wh')
         ],
-        [sg.Text('Total:', size=(10, 1)), sg.Text('n/a', key='-TOTAL_A-', size=(10, 1), pad=(0, 0), background_color='white', text_color='black'), sg.Text('A')]
+        [
+            sg.Text('Total:', size=(10, 1)), sg.Text('n/a', key='-TOTAL_A-', size=(10, 1), pad=(0, 0), background_color='white', text_color='black'), sg.Text('A'),
+            sg.Text('Running Sum:'), sg.Input(key='-TOTAL_WH-', size=(10, 1), pad=(0, 0)), sg.Text('Wh')
+        ]
     ]
     pwrusage_frame = sg.Frame('Power Usage', pwrusage_layout)
 
@@ -315,13 +325,15 @@ def log_file_exists_popup(filename):
 def main():
     """ Main entry point
     """
-    global window, log, use_batteries, battery
+    global window, log, use_batteries, battery, time_last_packet_received
     global output, group1, group2  # output_current_accumulated_group1, output_current_accumulated_group2
 
     # --------------------------------------------- #
     # Always starts assuming we're on power supply  #
     # --------------------------------------------- #
     use_batteries = False
+
+    time_last_packet_received = 0.0     # This will be a timestamp
 
     battery = {'nominal_voltage': 28.0, 'heaters_consumption': 0.9, 'max_wh': 3750, 'progress_wh': 3750, 'progress_percent': 100}
     output = {'current': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -472,6 +484,14 @@ def main():
                 window['-STATUS-'].update('USING BATTERIES', text_color='white', background_color='green')
             else:
                 window['-STATUS-'].update('USING POWER SUPPLY', text_color='white', background_color='red')
+            if time_last_packet_received <= 0.0:
+                window['-TIME_SINCE_PDU-'].update('n/a')
+            else:
+                delta = datetime.utcnow().timestamp() - time_last_packet_received
+                if delta > 0.0:
+                    window['-TIME_SINCE_PDU-'].update(f"{int(delta)}")
+                else:
+                    window['-TIME_SINCE_PDU-'].update('Error')
         # ..................................................................... ABOUT
         elif event == 'About':
             sg.popup('An application to control the CSA STRATOS Power Distribution Unit',
@@ -657,21 +677,6 @@ def send_refresh_all(sock, profiles, settings, destination):
     send_command(sock, 'STATUS,5', destination)
     send_command(sock, 'STATUS,6', destination)
 
-    # global log
-    # active_profile = profiles[settings['active_profile']]
-    # if active_profile['control1'] == "ENABLE":
-    #     send_command(sock, 'STATUS,1', destination)
-    # if active_profile['control2'] == "ENABLE":
-    #     send_command(sock, 'STATUS,2', destination)
-    # if active_profile['control3'] == "ENABLE":
-    #     send_command(sock, 'STATUS,3', destination)
-    # if active_profile['control4'] == "ENABLE":
-    #     send_command(sock, 'STATUS,4', destination)
-    # if active_profile['control5'] == "ENABLE":
-    #     send_command(sock, 'STATUS,5', destination)
-    # if active_profile['control6'] == "ENABLE":
-    #     send_command(sock, 'STATUS,6', destination)
-
 
 # =========================================================================== #
 #    ___  _   ___  ___ ___   _____ ___ _    ___ __  __ ___ _____ _____   __   #
@@ -684,7 +689,7 @@ def parse_telemetry(raw_packet, is_save_to_log_file):
         Note that the packet must be in the standard format:
         SRC,YYYY-MM-DD HH:MM:SS.sss,PKT_ID,...
     """
-    global window, log, output, battery, use_batteries
+    global window, log, output, battery, use_batteries, time_last_packet_received
 
     packet = raw_packet.split(",")
 
@@ -717,6 +722,8 @@ def parse_telemetry(raw_packet, is_save_to_log_file):
                     output['accumulated_Wh'][_HEATERS_] += (float(battery['heaters_consumption']) * (delta / 3600.0) * float(battery['nominal_voltage']))
                 output['last_update_time'][_HEATERS_] = 0.0
         return  # This is not from the PDU, will not process further
+    else:
+        time_last_packet_received = time_of_reception
 
     # ......................................................................... SRVCSET
     if header == "SRVCSET":  # Update service state
@@ -743,7 +750,10 @@ def parse_telemetry(raw_packet, is_save_to_log_file):
                 index = int(service_id)
                 if (index >= 1) and (index <= 6):
                     index = index - 1   # The array starts at zero!
-                    output['current'][index] = float(value)
+                    current = float(value)
+                    if current < 0.0:                                               #V2.06
+                        current = 0.0
+                    output['current'][index] = current
                     output['is_on'][index] = (service_state == '1')
                     # ------------------------------ #
                     # Calculated accumulated current #
@@ -892,6 +902,7 @@ def refresh_telemetry_stats_on_gui(services, values):
         if values['-OFFSET_WH-'].isdigit():
             offset = float(values['-OFFSET_WH-'])
     total_used += offset
+    window['-TOTAL_WH-'].update(f"{total_used:.3f}")
     battery['progress_wh'] = float(battery['max_wh']) - total_used
     window['-BATTERY_WH-'].update(f"{battery['progress_wh']:.3f}")
     battery_percent = int(float(battery['progress_wh']) / float(battery['max_wh']) * 100.0)

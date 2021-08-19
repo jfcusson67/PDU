@@ -28,7 +28,10 @@ def main():
                 sock.sendto(return_packet.encode(), ('localhost', tx_port))
             elif element[0] == 'STATUS':
                 service_index = int(element[1]) - 1
-                value = uniform(0.5, 1.0)
+                if service_index == 5:
+                    value = -0.12
+                else:
+                    value = uniform(0.5, 1.0)
                 return_packet = f'STATUS,{element[1]},{is_on[service_index]},{value:.3f}'
                 print('TX: '+return_packet)
                 sock.sendto(return_packet.encode(), ('localhost', tx_port))
