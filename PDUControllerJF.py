@@ -90,6 +90,7 @@
             consumption with heaters when on batteries.
  2.06 JFC - Interpret negative current as zero. Added total running sum
             and running time since last TM
+ 2.07 JFC - Ignore current readings from channels that are OFF
 """
 import configparser
 import os
@@ -104,7 +105,7 @@ from socket import *
 # ========================================== #
 # Make sure to update this VERSION_STRING!   #
 # ========================================== #
-VERSION_STRING = "2.06 (August 2021)"
+VERSION_STRING = "2.07 (August 2021)"
 # ========================================== #
 DEBUG = False                                # Set to false in operation
 CONFIG_FILE = "settings.ini"                # Path of config file
@@ -752,6 +753,8 @@ def parse_telemetry(raw_packet, is_save_to_log_file):
                     index = index - 1   # The array starts at zero!
                     current = float(value)
                     if current < 0.0:                                               #V2.06
+                        current = 0.0
+                    if not output['is_on'][index]:                                  #V2.07
                         current = 0.0
                     output['current'][index] = current
                     output['is_on'][index] = (service_state == '1')
